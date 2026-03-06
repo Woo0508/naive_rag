@@ -1,19 +1,45 @@
 cmake_minimum_required(VERSION 3.30)
-project(naive_rag)
+project(naive_rag LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xclang -fopenmp -L/usr/local/Cellar/libomp/21.1.8/lib -I/usr/local/Cellar/libomp/21.1.8/include")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
-set(CMAKE_OSX_ARCHITECTURES "x86_64")
+find_package(OpenMP QUIET)
 
-find_package(faiss REQUIRED)
-link_libraries(faiss)
+find_package(faiss CONFIG QUIET)
+if(TARGET faiss::faiss)
+    add_library(faiss ALIAS faiss::faiss)
+elseif(NOT TARGET faiss)
+    # Conda/micromamba installs of Faiss often don't ship faissConfig.cmake.
+    # Fall back to locating headers + library in CMAKE_PREFIX_PATH / CONDA_PREFIX.
+    set(_faiss_hints "")
+    if(DEFINED CMAKE_PREFIX_PATH)
+        list(APPEND _faiss_hints ${CMAKE_PREFIX_PATH})
+    endif()
+    if(DEFINED ENV{CONDA_PREFIX})
+        list(APPEND _faiss_hints "$ENV{CONDA_PREFIX}")
+    endif()
 
-#add_subdirectory(/usr/local/Cellar/faiss/1.13.2/include/faiss)
+    find_path(FAISS_INCLUDE_DIR
+        NAMES faiss/Index.h
+        HINTS ${_faiss_hints}
+        PATH_SUFFIXES include)
+    find_library(FAISS_LIBRARY
+        NAMES faiss
+        HINTS ${_faiss_hints}
+        PATH_SUFFIXES lib)
 
-include_directories(/usr/local/Cellar/faiss/1.13.2/include/faiss)
-link_directories(/usr/local/Cellar/faiss/1.13.2/lib)
+    if(NOT FAISS_INCLUDE_DIR OR NOT FAISS_LIBRARY)
+        message(FATAL_ERROR
+            "Faiss not found. Install Faiss and reconfigure with -DCMAKE_PREFIX_PATH=<prefix> "
+            "(for micromamba/conda: -DCMAKE_PREFIX_PATH=$CONDA_PREFIX).")
+    endif()
+
+    add_library(faiss UNKNOWN IMPORTED)
+    set_target_properties(faiss PROPERTIES
+        IMPORTED_LOCATION "${FAISS_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${FAISS_INCLUDE_DIR}")
+endif()
 
 
 
@@ -27,7 +53,10 @@ add_executable(naive_rag main.cpp
         src/vector_utils.cpp
         utils.cpp)
 
-target_link_libraries(naive_rag faiss)
+target_link_libraries(naive_rag PRIVATE faiss)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(naive_rag PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 add_library(openfhecorelib SHARED IMPORTED)
 add_library(openfhepkelib SHARED IMPORTED)
@@ -44,9 +73,9 @@ link_directories("/usr/local/lib")
 link_directories("/usr/include")
 
 #target_link_libraries(SLAP omp)
-target_link_libraries(naive_rag OPENFHEcore)
-target_link_libraries(naive_rag OPENFHEpke)
-target_link_libraries(naive_rag OPENFHEbinfhe)
+target_link_libraries(naive_rag PRIVATE OPENFHEcore)
+target_link_libraries(naive_rag PRIVATE OPENFHEpke)
+target_link_libraries(naive_rag PRIVATE OPENFHEbinfhe)
 
 set(CMAKE_PREFIX_PATH "/usr/local/lib/OpenFHE")
-find_package("OpenFHE")
+find_package("OpenFHE" QUIET)
