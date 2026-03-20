@@ -30,7 +30,17 @@ int main(int argc, char *argv[]) {
     std::cout << "Embedding file: " << embedding_file << std::endl;
     std::cout << "Faiss file: " << faiss_file << std::endl;
     std::cout << "Database file: " << database_file << std::endl;
-    /**
+
+    // ===== READ CSV FILES =====
+    cout << "1. Reading CSV files..." << endl;
+    vector<vector<int>> csv1 = readBinaryStringCSV(file1);
+    vector<vector<int>> csv2 = readBinaryStringCSV(file2);
+    if (csv1.empty() || csv2.empty()) {
+        cerr << "Failed to read CSV files" << endl;
+        return 1;
+    }
+    
+    // ===== CKKS =====
 
     //Setup Client and Server
     size_t multDepth = OpenFHEWrapper::computeRequiredDepth(5);
@@ -87,7 +97,6 @@ int main(int argc, char *argv[]) {
 
     Client *client = new Client(cc, pk, sk, 528);
     Server *server = new Server(cc, pk, 528);
-     **/
 
     //Query
     std::vector<float> query_embedding = readFloatsFromFile(embedding_file);
@@ -122,6 +131,7 @@ int main(int argc, char *argv[]) {
     cout << distances << endl;
 
     //Multiply by database
+    //NAIVE-PIR
     vector<float> solutions;
     vector<string> result(db_size);
     for (size_t i = 0; i < db_size; i++){
