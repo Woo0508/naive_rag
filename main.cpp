@@ -103,6 +103,38 @@ int main(int argc, char *argv[]) {
 
     std::vector<std::vector<float>> embedding_database = faissIndexToVectors(index);
 
+    // plaintext approach- 
+    float square_query_embedding = square(query_embedding);
+
+    size_t db_size = embedding_database.size();
+    std::vector<float> square_embedding_database(db_size);
+    for (size_t i = 0; i < db_size; i++){
+        square_embedding_database[i] = square(embedding_database[i]);
+    }
+
+    //Calculate similarity
+    std::vector<float> distances(db_size);
+    for (size_t i = 0; i < db_size; i++){
+        distances[i] = euclideanDistance(
+                query_embedding,embedding_database[i],
+                square_query_embedding,square_embedding_database[i]);
+    }
+    cout << distances << endl;
+
+    {
+        std::ofstream out("plaintext_distances.txt");
+        if (!out.is_open()) {
+            std::cerr << "Could not open\n";
+        } else {
+            for (size_t i = 0; i < distances.size(); i++) {
+                out << i << "," << distances[i]<< "\n";
+            }
+        }
+    }
+
+
+    //ENCRYPTED APPROACH- 
+
     // precompute e^2 in plaintext then encrypt it
     std::vector<double> query_embedding_d(query_embedding.begin(), query_embedding.end());
 
