@@ -5,6 +5,7 @@
 #include "openfhe.h"
 #include <iostream>
 #include <ctime>
+#include <numeric>
 
 #include "utils.cpp"
 #include "include/client.h"
@@ -14,8 +15,31 @@ using namespace lbcrypto;
 using namespace std;
 using namespace VectorUtils;
 
-// TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
+//Helper to convert string to binary vector (ASCII)
+vector<int> stringToBinaryVector(const string& text) {
+    vector<int> bits;
+    for (char c : text) 
+    {
+        for (int i = 7; i >= 0; i--) {
+            bits.push_back((c >> i) & 1);
+        }
+    }
+    return bits;
+}
+
+//Helper to convert binary vector to string
+string binaryVectorToString(const vector<int>& bits) {
+    string result;
+    for (size_t i = 0; i + 7 < bits.size(); i += 8) {
+        char c = 0;
+        for (int j = 0; j < 8; j++) {
+            c = (c << 1) | bits[i + j];
+        }
+        result += c;
+    }
+    return result;
+}
+
 int main(int argc, char *argv[]) {
 
     if (argc != 4) {
@@ -31,21 +55,9 @@ int main(int argc, char *argv[]) {
     std::cout << "Faiss file: " << faiss_file << std::endl;
     std::cout << "Database file: " << database_file << std::endl;
 
-    // ===== READ CSV FILES =====
-    cout << "1. Reading CSV files..." << endl;
-    vector<vector<int>> csv1 = readBinaryStringCSV(file1);
-    vector<vector<int>> csv2 = readBinaryStringCSV(file2);
-    if (csv1.empty() || csv2.empty()) {
-        cerr << "Failed to read CSV files" << endl;
-        return 1;
-    }
-    
-    // ===== CKKS =====
-
-    //Setup Client and Server
+    // ===== CKKS SETUP =====
     size_t multDepth = OpenFHEWrapper::computeRequiredDepth(5);
 
-    // Declare CKKS scheme elements
     CryptoContext<DCRTPoly> cc;
     cc->ClearEvalMultKeys();
     cc->ClearEvalAutomorphismKeys();
@@ -81,13 +93,10 @@ int main(int argc, char *argv[]) {
 
     cout << "Generating rotation keys... " << endl;
     vector<int> rotationFactors(VECTOR_DIM-1);
-    // generate keys from 1 to VECTOR_DIM
     iota(rotationFactors.begin(), rotationFactors.end(), 1);
-    // generate positive binary rotation keys greater than VECTOR_DIM
     for(int i = VECTOR_DIM; i < int(batchSize); i *= 2) {
         rotationFactors.push_back(i);
     }
-    // generate negative binary rotation keys
     for(int i = 1; i < int(batchSize); i *= 2) {
         rotationFactors.push_back(-i);
     }
@@ -95,12 +104,72 @@ int main(int argc, char *argv[]) {
 
     cout << "CKKS scheme set up (depth = " << multDepth << ", batch size = " << batchSize << ")" << endl;
 
-    Client *client = new Client(cc, pk, sk, 528);
-    Server *server = new Server(cc, pk, 528);
+    Client *client = new Client(cc, pk, sk, VECTOR_DIM, "");
+    Server *server = new Server(cc, pk, VECTOR_DIM);
 
-    //Query
-    std::vector<float> query_embedding = readFloatsFromFile(embedding_file);
+    cout << "\n Loading Database" << endl;
     std::vector<std::string> database = readStringsFromFile(database_file);
+    cout << "Loaded " << database.size() << " database entries" << endl;
+    
+    for (size_t i = 0; i < min(size_t(5), database.size()); i++) {
+        cout << "  [" << i << "] " << database[i] << endl;
+    }
+
+    // ===== PIR =====
+
+    vector<vector<int>> binaryDatabase;
+    for (const auto& entry : database) {
+        binaryDatabase.push_back(stringToBinaryVector(entry));
+    }
+    cout << "Converted " << binaryDatabase.size() << " entries to binary (" 
+         << binaryDatabase[0].size() << " bits each)" << endl;
+
+    server->loadAndEncryptBinaryDatabase(binaryDatabase);
+
+
+    int targetIndex = 2;
+    if (targetIndex < database.size()) {
+        cout << "\nTesting PIR for index " << targetIndex << ": \"" << database[targetIndex] << "\"" << endl;
+        
+        vector<double> oneHot(batchSize, 0.0);
+        oneHot[targetIndex] = 1.0;
+        Ciphertext<DCRTPoly> query = OpenFHEWrapper::encryptFromVector(cc, pk, oneHot);
+        server->setCiphertext(query);
+        
+        if (server->databaseQuery()) {
+            server->saveResult();
+            
+            auto encryptedResults = server->getQueryResult();
+            
+            int bitsPerItem = binaryDatabase[0].size();
+            vector<int> retrievedBits;
+            
+            for (int bitIdx = 0; bitIdx < bitsPerItem; bitIdx++) {
+                int resultIdx = targetIndex * bitsPerItem + bitIdx;
+                if (resultIdx < encryptedResults.size()) {
+                    auto dec = OpenFHEWrapper::decryptToVector(cc, sk, encryptedResults[resultIdx]);
+                    int bit = static_cast<int>(round(dec[0]));
+                    retrievedBits.push_back(bit);
+                }
+            }
+            
+            string retrievedString = binaryVectorToString(retrievedBits);
+            
+            cout << "  Expected: \"" << database[targetIndex] << "\"" << endl;
+            cout << "  Retrieved: \"" << retrievedString << "\"" << endl;
+            
+            if (database[targetIndex] == retrievedString) {
+                cout << "PIR SUCCESSFUL!" << endl;
+            } else {
+                cout << "PIR FAILED!" << endl;
+            }
+        }
+    }
+
+
+    
+    // Query
+    std::vector<float> query_embedding = readFloatsFromFile(embedding_file);
     faiss::Index* index = readFaissIndex(faiss_file);
 
     std::cout << "Index loaded successfully!" << std::endl;
@@ -118,20 +187,17 @@ int main(int argc, char *argv[]) {
         square_embedding_database[i] = square(embedding_database[i]);
     }
 
-    //Calculate similarity
+    // Calculate similarity
     std::vector<float> distances(db_size);
     for (size_t i = 0; i < db_size; i++){
         distances[i] = euclideanDistance(
-                query_embedding,embedding_database[i],
-                square_query_embedding,square_embedding_database[i]);
+                query_embedding, embedding_database[i],
+                square_query_embedding, square_embedding_database[i]);
     }
-    cout << distances << endl;
 
     threshold(distances, 0.61);
-    cout << distances << endl;
 
-    //Multiply by database
-    //NAIVE-PIR
+    // Naive-PIR retrieval
     vector<float> solutions;
     vector<string> result(db_size);
     for (size_t i = 0; i < db_size; i++){
@@ -144,15 +210,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    //Decode result
     cout << "Number of solutions " << solutions.size() << " : " << solutions << endl;
     cout << result << endl;
 
-    //Baseline
-    int k = 10;  // number of nearest neighbors
-    std::vector<float> query(index->d);  // query vector
-    // Fill query vector with your data...
-
+    // Baseline FAISS search
+    int k = 10;
+    std::vector<float> query(index->d);
     std::vector<float> top_distances(k);
     std::vector<faiss::idx_t> labels(k);
 
@@ -161,14 +224,7 @@ int main(int argc, char *argv[]) {
     std::cout << "\nTop " << k << " nearest neighbors:" << std::endl;
     for (int i = 0; i < k; ++i) {
         std::cout << "  ID: " << labels[i] << " " << database[labels[i]] << std::endl;
-        // Distance: " << distances[i] << std::endl;
-
     }
 
     return 0;
 }
-
-// TIP See CLion help at <a
-// href="https://www.jetbrains.com/help/clion/">jetbrains.com/help/clion/</a>.
-//  Also, you can try interactive lessons for CLion by selecting
-//  'Help | Learn IDE Features' from the main menu.
