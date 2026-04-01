@@ -97,7 +97,7 @@ int main(int argc, char *argv[]) {
     cc->Enable(ADVANCEDSHE);
 
     batchSize = cc->GetEncodingParams()->GetBatchSize();
-    // batch size error check 
+    // batch size error check
     if (dim > batchSize) {
         std::cerr << "Error: embedding dimension " << dim << " exceeds CKKS batch size " << batchSize << "\n";
         return 1;
@@ -131,7 +131,7 @@ int main(int argc, char *argv[]) {
     cout << "CKKS scheme set up (depth = " << multDepth << ", batch size = " << batchSize << ")" << endl;
 
     // Set up database size - 100 for texting 
-    const size_t kMaxDbVectors = 100;
+    const size_t kMaxDbVectors = 30;
     const size_t db_size = (kMaxDbVectors == 0) ? embedding_database.size()
                                                 : std::min(kMaxDbVectors, embedding_database.size());
 

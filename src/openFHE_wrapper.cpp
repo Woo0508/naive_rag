@@ -35,12 +35,12 @@ size_t OpenFHEWrapper::computeRequiredDepth(size_t approach) {
       break;
 
     case 5: // naive packed inner product + Chebyshev threshold (main.cpp path)
-      // CKKS uses the modulus chain for relin/rescale, not only a raw mult count: distance ops plus one
-      // mult for the margin, then chebyshevCompare (high-degree EvalChebyshevFunction + EvalPoly F4).
-      // If encrypted distance hits GetLevel()==0 before compare, Chebyshev returns garbage (~0), not 0/1 bits.
-      depth += 14;         // distance pipeline + margin EvalMult + chain headroom
-      depth += COMP_DEPTH; // must match signDepth passed to chebyshevCompare
-      depth += 8;          // extra primes for internal polynomial rescales / noise
+      // Mod-chain budget: EvalMult(ctE,ptD), EvalMult(ctInner,-2), EvalMult(ctDist,margin), then
+      // chebyshevCompare (sign Chebyshev + F4 poly). Too small → GetLevel()==0 before compare (garbage bits).
+      // Tuned lower than the previous 14+COMP+8=32; bump +2 here if Chebyshev outputs all ~0 again.
+      depth += 10;
+      depth += COMP_DEPTH;
+      depth += 6;
       break;
   }
 
