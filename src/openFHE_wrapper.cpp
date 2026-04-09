@@ -34,9 +34,13 @@ size_t OpenFHEWrapper::computeRequiredDepth(size_t approach) {
       depth += COMP_DEPTH;  // mults required for threshold comparison
       break;
 
-    case 5: // novel diagonal linear transform
-      depth += 1;           // one mult required for score computation
-      depth += COMP_DEPTH;  // mults required for threshold comparison
+    case 5: // naive packed inner product + Chebyshev threshold
+      // Mod-chain budget: EvalMult(ctE,ptD), EvalMult(ctInner,-2), EvalMult(ctDist,margin), then
+      // chebyshevCompare (sign Chebyshev + F4 poly). Too small → GetLevel()==0 before compare (garbage bits).
+      // Tuned lower than the previous 14+COMP+8=32; bump +2 here if Chebyshev outputs all ~0 again.
+      depth += 8;
+      depth += COMP_DEPTH;
+      depth += 3;
       break;
   }
 
